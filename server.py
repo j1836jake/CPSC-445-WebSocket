@@ -1,11 +1,15 @@
 from flask import Flask, request
 from flask_socketio import SocketIO, emit
+import re
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Store connected users
 active_users = {}
+
+HOST = "0.0.0.0"
+PORT = 5001
 
 @app.route('/')
 def index():
@@ -17,27 +21,58 @@ def handle_connect():
     print("Client connected!")  # This should print when a client connects
     emit('server_response', {'data': 'Connected to server'})
 
+
 @socketio.on('disconnect')
 def handle_disconnect():
-    print("Client disconnected!")  # This prints on disconnect
+    print("Client disconnected!")
+
+    # Find the username associated with this session ID
+    disconnected_user = None
+    for username, user_data in list(active_users.items()):
+        if user_data['sid'] == request.sid:
+            disconnected_user = username
+            del active_users[username]
+            break
+
+    # Broadcast user leaving (if they were registered)
+    if disconnected_user:
+        print(f"{disconnected_user} has left the chat.")
+        emit('user_left', {'username': disconnected_user}, broadcast=True, include_self=False)
+
+@socketio.on('check_user')
+def handle_check_user(data):
+    username = data.get('username')
+    exists = username in active_users
+    emit('user_check_response', {'exists': exists})
+
+def is_valid_username(username):
+    """Validate username: Only letters, numbers, and underscores, between 3-15 characters."""
+    return bool(re.match(r'^[a-zA-Z0-9_]{3,15}$', username))  # Restrict length
+
 
 @socketio.on('register')
 def handle_registration(data):
     username = data.get('username')
 
+    # Convert to lowercase for case-insensitive uniqueness
+    username_lower = username.lower()
+
     # Checks if username is valid and available
-    if username is None or username == "":
-        emit('registration_response', {'success': False, 'message': 'Invalid username'})
-    elif username in active_users:
+    if not is_valid_username(username):
+        emit('registration_response', {'success': False, 'message': 'Invalid username! Use only letters, numbers, and underscores.'})
+        return
+    if username_lower in (u.lower() for u in active_users):
         emit('registration_response', {'success': False, 'message': 'Username already taken'})
+        return
     else:
         # Store user info
         active_users[username] = {'sid': request.sid}
+
         # Notification of successful registration
         emit('registration_response', {'success': True, 'message': f'Welcome {username}!'})
-        # Notify other users about new user
-        #emit('user_joined', {'username': username}, broadcast=True, include_self=False)
 
+        # Notify all other users that a new user has joined
+        emit("user_joined", {"username": username}, broadcast=True, include_self=False)
 
 @socketio.on('private_message')
 def handle_private_message(data):
@@ -73,4 +108,4 @@ def handle_private_message(data):
 
 if __name__ == '__main__':
     print("Starting server...")  # Added print
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+    socketio.run(app, debug=True, host=HOST, port=PORT)
