@@ -94,9 +94,9 @@ def send_message():
 def handle_private_message(data):
     print(f"\n{data['sender']}: {data['message']}\nYou: ", end='', flush=True)
 
-@sio.on('message_sent')
-def handle_message_sent(data):
-    print(f"Message sent to {data['recipient']}")
+# @sio.on('message_sent')
+# def handle_message_sent(data):
+#     print("Message sent!\nYou: ", end='', flush=True)
 
 @sio.on('message_error')
 def handle_message_error(data):
