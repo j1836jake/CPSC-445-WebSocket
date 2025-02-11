@@ -1,6 +1,7 @@
 from flask import Flask, request
 from flask_socketio import SocketIO, emit
 import re
+import hashlib
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -49,10 +50,35 @@ def is_valid_username(username):
     """Validate username: Only letters, numbers, and underscores, between 3-15 characters."""
     return bool(re.match(r'^[a-zA-Z0-9_]{3,15}$', username))  # Restrict length
 
+def hash_password(password):
+    """Hash a password for secure storage."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+@socketio.on('login')
+def handle_login(data):
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+
+    # Check if username exists
+    if username not in active_users:
+        emit('login_response', {'success': False, 'message': 'Invalid username or password'})
+        return
+
+    # Verify password
+    hashed_password = hash_password(password)
+    if hashed_password != active_users[username]['password']:
+        emit('login_response', {'success': False, 'message': 'Invalid username or password'})
+        return
+
+    # Allow login and send confirmation
+    active_users[username]['sid'] = request.sid  # Update session ID
+    emit('login_response', {'success': True, 'message': f'Welcome back, {username}!'})
+
 
 @socketio.on('register')
 def handle_registration(data):
     username = data.get('username')
+    password = data.get('password')
 
     # Convert to lowercase for case-insensitive uniqueness
     username_lower = username.lower()
@@ -64,9 +90,15 @@ def handle_registration(data):
     if username_lower in (u.lower() for u in active_users):
         emit('registration_response', {'success': False, 'message': 'Username already taken'})
         return
+    if len(password) < 6:
+        emit('registration_response', {'success': False, 'message': 'Password must be at least 6 characters'})
+        return
     else:
+        # Hash the password before storing
+        hashed_password = hash_password(password)
+
         # Store user info
-        active_users[username] = {'sid': request.sid}
+        active_users[username] = {'sid': request.sid, 'password': hashed_password}
 
         # Notification of successful registration
         emit('registration_response', {'success': True, 'message': f'Welcome {username}!'})

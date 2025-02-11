@@ -2,11 +2,15 @@ import socketio
 import sys
 import re
 import threading
+import getpass
 
 SERVER_URL = "http://localhost:5001"
 EXIT_COMMAND = "exit"
+
 registration_response = None  # Stores server response
 user_check_response = None  # Stores server response
+login_response = None  # Stores login response from the server
+
 
 print("Starting client...")  # Added print
 
@@ -19,19 +23,64 @@ def connect():
     print("Connection established, waiting for registration...")
 
     while True:
-        username = input("Enter your username: ").strip()
-        # Send registration request
-        sio.emit('register', {'username': username})
+        choice = input("Do you want to (L)ogin or (R)egister? ").strip().lower()
 
-        # Wait for response before continuing
+        if choice == 'r':
+            register()
+            break
+        elif choice == 'l':
+            login()
+            break
+        else:
+            print("Invalid choice. Please enter 'L' to login or 'R' to register.")
+
+
+def register():
+    while True:
+        username = input("Enter your username: ").strip()
+        password = getpass.getpass("Enter your password: ").strip()
+
+        sio.emit('register', {'username': username, 'password': password})
         response = wait_for_registration_response()
 
         if response['success']:
             print(f"Registration successful: {response['message']}")
             start_chat()
-            break  # Exit loop and start chat after success
+            break
         else:
             print(f"Registration failed: {response['message']}. Try again.")
+
+
+def login():
+    while True:
+        username = input("Enter your username: ").strip()
+        password = getpass.getpass("Enter your password: ").strip()
+
+        sio.emit('login', {'username': username, 'password': password})
+        response = wait_for_login_response()
+
+        if response['success']:
+            print(f"Login successful: {response['message']}")
+            start_chat()
+            break
+        else:
+            print(f"Login failed: {response['message']}. Try again.")
+
+
+def wait_for_login_response():
+    """Waits for the login response from the server before proceeding."""
+    global login_response
+    login_response = None  # Reset response
+
+    while login_response is None:
+        pass  # Keep looping until response arrives
+
+    return login_response
+
+@sio.on('login_response')
+def handle_login_response(data):
+    global login_response
+    login_response = data  # Store the response for waiting function
 
 
 def wait_for_registration_response():
@@ -152,7 +201,7 @@ def start_chat():
 def main():
     try:
         print("Attempting to connect to server...")  # Added print
-        sio.connect('http://localhost:5001') # Connect to server and keep connection open
+        sio.connect(SERVER_URL) # Connect to server and keep connection open
 
         sio.wait()
     except Exception as e:
