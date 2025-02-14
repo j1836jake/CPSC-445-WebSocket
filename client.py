@@ -1,10 +1,12 @@
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import socketio
 import sys
 import re
 import threading
 import getpass
 
-SERVER_URL = "http://localhost:5001"
+SERVER_URL = "https://localhost:5001"
 EXIT_COMMAND = "exit"
 
 registration_response = None  # Stores server response
@@ -15,7 +17,7 @@ login_response = None  # Stores login response from the server
 print("Starting client...")  # Added print
 
 # Create Socket.IO client
-sio = socketio.Client()
+sio = socketio.Client(ssl_verify=False)
 
 @sio.event
 def connect():

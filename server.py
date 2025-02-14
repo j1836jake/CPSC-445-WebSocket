@@ -140,4 +140,8 @@ def handle_private_message(data):
 
 if __name__ == '__main__':
     print("Starting server...")  # Added print
-    socketio.run(app, debug=True, host=HOST, port=PORT)
+    socketio.run(app,
+                     debug=True,
+                     host=HOST,
+                     port=PORT,
+                     ssl_context=('cert.pem', 'key.pem'))
