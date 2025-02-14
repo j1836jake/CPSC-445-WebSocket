@@ -5,7 +5,10 @@ import hashlib
 import time
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app,
+                    cors_allowed_origins="*",
+                    ping_timeout = 10, # secs waited for ping response
+                    ping_interval = 5) # secs between pings
 
 # Store connected users
 active_users = {}

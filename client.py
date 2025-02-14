@@ -5,7 +5,6 @@ import sys
 import re
 import threading
 import getpass
-
 SERVER_URL = "https://localhost:5001"
 EXIT_COMMAND = "exit"
 
@@ -17,7 +16,12 @@ login_response = None  # Stores login response from the server
 print("Starting client...")  # Added print
 
 # Create Socket.IO client
-sio = socketio.Client(ssl_verify=False)
+sio = socketio.Client(ssl_verify= False,
+                      reconnection= True,
+                      reconnection_attempts = 5, # max reconnection attempts
+                      reconnection_delay = 1, # delay w/ 1 sec
+                      reconnection_delay_max = 5, # max 5 sec between attempts
+)
 
 @sio.event
 def connect():
@@ -35,6 +39,10 @@ def connect():
             break
         else:
             print("Invalid choice. Please enter 'L' to login or 'R' to register.")
+
+@sio.event()
+def connect_error(data):
+        print("\n!!! Connection Error. Attempting to reconnect...\n")
 
 
 def register():
@@ -117,12 +125,14 @@ def disconnect_client():
     sys.exit(0)
 
 def reconnect():
-    print("Attempting to reconnect...")
     try:
+        print("\n!!! Attempting to reconnect to server...")
         sio.connect(SERVER_URL)
-        print("Reconnected successfully!")
+        print("=== Reconnected successfully! ===")
+        return True
     except Exception as e:
-        print(f"Reconnection failed: {e}")
+        print(f"XXX Reconnection failed - Please restart client XXX")
+        return False
 
 @sio.on('user_left')
 def handle_user_left(data):
