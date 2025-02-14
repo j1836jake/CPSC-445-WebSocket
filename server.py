@@ -2,6 +2,7 @@ from flask import Flask, request
 from flask_socketio import SocketIO, emit
 import re
 import hashlib
+import time
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -98,7 +99,10 @@ def handle_registration(data):
         hashed_password = hash_password(password)
 
         # Store user info
-        active_users[username] = {'sid': request.sid, 'password': hashed_password}
+        active_users[username] = {'sid': request.sid,
+                                  'password': hashed_password,
+                                  'message_timestamps': [] # tracks message times
+        }
 
         # Notification of successful registration
         emit('registration_response', {'success': True, 'message': f'Welcome {username}!'})
@@ -108,6 +112,7 @@ def handle_registration(data):
 
 @socketio.on('private_message')
 def handle_private_message(data):
+    current_time = time.time()
     recipient_name = data.get('recipient')
     message = data.get('message')
 
@@ -117,25 +122,41 @@ def handle_private_message(data):
         if user_data['sid'] == request.sid:
             sender_name = username
             break
+    # Future implement, token approach?
+    if sender_name:
+        # Get user's message time and removess old ones,more than 10 secs
+        user_timestamps = active_users[sender_name]['message_timestamps']
+        user_timestamps = [ts for ts in user_timestamps if current_time - ts < 10]
+        active_users[sender_name]['message_timestamps'] = user_timestamps
 
-    # Check if recipient exists
-    if recipient_name in active_users:
-        recipient_sid = active_users[recipient_name]['sid']
-        # Emit message to only the recipient
-        emit('new_private_message', {
-            'sender': sender_name,
-            'message': message
-        }, room = recipient_sid)
-        # Also send confirmation to sender
-        emit('message_sent', {
-            'recipient': recipient_name,
-            'message': message
-        })
-    else:
-        # If recipient doesn't exist, send error to sender
-        emit('message_error', {
-            'message': f'User {recipient_name} not found'
-        })
+        # Check if user has sent too many messages
+        if len(user_timestamps) >= 5:
+            emit('message_error', {
+                'message': 'Rate limit exceeded. Please wait before sending more messages.'
+            })
+            return
+
+        # Add current message timestamp
+        user_timestamps.append(current_time)
+
+        # Check if recipient exists
+        if recipient_name in active_users:
+            recipient_sid = active_users[recipient_name]['sid']
+            # Emit message to only the recipient
+            emit('new_private_message', {
+                'sender': sender_name,
+                'message': message
+            }, room = recipient_sid)
+            # Also send confirmation to sender
+            emit('message_sent', {
+                'recipient': recipient_name,
+                'message': message
+            })
+        else:
+            # If recipient doesn't exist, send error to sender
+            emit('message_error', {
+                'message': f'User {recipient_name} not found'
+            })
 
 
 if __name__ == '__main__':
