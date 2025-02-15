@@ -64,7 +64,7 @@ def mark_user_online(username, sid):
     if cursor.rowcount == 0:
         print(f"WARNING: User {username} not found in database, cannot mark online.")
     else:
-        print(f"SUCCESS: User {username} is now ONLINE with SID: {sid}")
+        print(f" SUCCESS: User {username} is now ONLINE with SID: {sid}")
 
     conn.commit()  # Force commit to database
     conn.close()
@@ -72,11 +72,22 @@ def mark_user_online(username, sid):
 
 
 def mark_user_offline(sid):
-    """Marks a user as offline by removing their session ID."""
+    """Marks a user as offline by finding their username before updating."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET sid = NULL WHERE sid = ?", (sid,))
-    conn.commit()
+
+    # Get the username first
+    cursor.execute("SELECT username FROM users WHERE sid = ?", (sid,))
+    row = cursor.fetchone()
+
+    if row:
+        username = row[0]
+        cursor.execute("UPDATE users SET sid = NULL WHERE username = ?", (username,))
+        conn.commit()
+        print(f"SUCCESS: User {username} is now OFFLINE (SID cleared).")
+    else:
+        print(f"WARNING: No user found with SID {sid}. Nothing to update.")
+
     conn.close()
 
 
@@ -139,6 +150,18 @@ def handle_login(data):
 def handle_registration(data):
     username = data.get('username', '').strip()
     password = data.get('password', '').strip()
+    # Validate username format
+    if not is_valid_username(username):
+        emit('registration_response',
+             {'success': False, 'message': 'Invalid username format (3-15 alphanumeric characters only).'})
+        return
+
+    # Validate password length
+    if len(password) < 6:
+        emit('registration_response', {'success': False, 'message': 'Password must be at least 6 characters long.'})
+        return
+
+    # Hash the password with function
     hashed_password = hash_password(password)
 
     try:
@@ -154,18 +177,16 @@ def handle_registration(data):
         cursor.execute("UPDATE users SET sid = ? WHERE username = ?", (sid, username))
         conn.commit()
 
-        print(f"✅ SUCCESS: User {username} registered and marked online (SID: {sid})")
+        print(f"SUCCESS: User {username} registered and marked online (SID: {sid})")
 
         # Notification of successful registration
         emit('registration_response', {'success': True, 'message': f'Welcome {username}!'})
 
     except sqlite3.IntegrityError:
         emit('registration_response', {'success': False, 'message': 'Username already taken'})
-
     except Exception as e:
         print(f"Database error on registration: {e}")
         emit('registration_response', {'success': False, 'message': 'Server error'})
-
     finally:
         conn.close()
 
@@ -206,7 +227,8 @@ def handle_private_message(data):
         sender_name = row[0]
 
     if not sender_name:
-        emit('message_error', {'message': 'Invalid sender. Please re-login.'})
+        emit('message_error', {'message': 'ERROR: Invalid sender. Please re-login.'})
+        conn.close()
         return
 
     # Initialize rate limit tracking for user if not already set
@@ -218,37 +240,38 @@ def handle_private_message(data):
 
     # Check if user has exceeded the message limit
     if len(user_message_timestamps[sender_name]) >= 5:
+        print(f"🚨 Rate limit exceeded for {sender_name}! Messages sent in last 10 seconds: {user_message_timestamps[sender_name]}")
         emit('message_error', {'message': 'ERROR: Rate limit exceeded. Please wait before sending more messages.'})
+        conn.close()
         return
 
     # Add the current message timestamp
     user_message_timestamps[sender_name].append(current_time)
 
-    if sender_name and recipient_name:
-        # Store the message in the database
-        cursor.execute("INSERT INTO messages (sender, recipient, message) VALUES (?, ?, ?)",
-                       (sender_name, recipient_name, message))
-        conn.commit()
+    # Ensure recipient is online before storing message
+    cursor.execute("SELECT sid FROM users WHERE username = ?", (recipient_name,))
+    recipient_row = cursor.fetchone()
 
-        # Get recipient's session ID
-        cursor.execute("SELECT sid FROM users WHERE username = ? AND sid IS NOT NULL AND sid != ''", (recipient_name,))
-        recipient_row = cursor.fetchone()
+    if not recipient_row or not recipient_row[0]:  # Ensure recipient is online
+        emit('message_error', {'message': f'ERROR: User {recipient_name} is offline. Message not sent.'})
         conn.close()
+        return
 
-        if not recipient_row or not recipient_row[0]:  # Ensure recipient is online
-            emit('message_error', {'message': f'ERROR: User {recipient_name} is offline. Message not sent.'})
-            return
+    recipient_sid = recipient_row[0]
+    print(f"Sending message from {sender_name} to {recipient_name} (SID: {recipient_sid})")
 
-        recipient_sid = recipient_row[0]
-        print(f" Sending message from {sender_name} to {recipient_name} (SID: {recipient_sid})")
+    # Store the message in the database AFTER confirming recipient is online
+    cursor.execute("INSERT INTO messages (sender, recipient, message) VALUES (?, ?, ?)",
+                   (sender_name, recipient_name, message))
+    conn.commit()
+    conn.close()
 
-        # Emit message to recipient
-        emit('new_private_message', {'sender': sender_name, 'message': message}, room=recipient_sid)
+    # Emit message to recipient
+    emit('new_private_message', {'sender': sender_name, 'message': message}, room=recipient_sid)
 
-        # Confirm message sent to sender
-        emit('message_sent', {'recipient': recipient_name, 'message': message})
-    else:
-        emit('message_error', {'message': f'User {recipient_name} is not online or does not exist'})
+    # Confirm message sent to sender
+    emit('message_sent', {'recipient': recipient_name, 'message': message})
+
 
 if __name__ == '__main__':
     print("Starting server with SQLite support...")

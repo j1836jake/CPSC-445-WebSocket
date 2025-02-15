@@ -1,16 +1,21 @@
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from asyncio import timeout
 
 import socketio
 import sys
+import re
+import threading
 import getpass
 import time
-
 SERVER_URL = "http://localhost:5001"
 EXIT_COMMAND = "exit"
 
 registration_response = None  # Stores server response
 user_check_response = None  # Stores server response
 login_response = None  # Stores login response from the server
+last_username = None # Store last_username in memory for reconnect
+last_password = None # Store last_password in memory for reconnect
 
 print("Starting client...")  # Added print
 
@@ -24,8 +29,25 @@ sio = socketio.Client(ssl_verify= False,
 
 @sio.event
 def connect():
+    global last_username, last_password
+
     print("Connected to server!")
-    print("Connection established, waiting for registration...")
+
+        # Handle reconnecting users
+    if last_username and last_password:
+        print(f"Re-authenticating as {last_username}...")
+        sio.emit('login', {'username': last_username, 'password': last_password})
+
+        # Wait for login response to confirm reconnection
+        response = wait_for_login_response()
+        if response['success']:
+            print(f"Reconnected and re-authenticated as {last_username}!")
+            start_chat()
+        else:
+            print("Re-authentication failed. Please log in again.")
+    else:
+        # This is the first connection – ask for login/registration
+        print("Connection established, waiting for registration...")
 
     while True:
         choice = input("Do you want to (L)ogin or (R)egister? ").strip().lower()
@@ -59,10 +81,16 @@ def register():
         else:
             print(f"Registration failed: {response['message']}. Try again.")
 
+
 def login():
     while True:
+        global last_username, last_password
+
         username = input("Enter your username: ").strip()
         password = getpass.getpass("Enter your password: ").strip()
+
+        last_username = username  # Store for reconnecting
+        last_password = password
 
         sio.emit('login', {'username': username, 'password': password})
         response = wait_for_login_response()
@@ -91,13 +119,11 @@ def handle_login_response(data):
     global login_response
     login_response = data  # Store the response for waiting function
 
-
 def wait_for_registration_response():
     """Waits for the registration response from the server before proceeding."""
     global registration_response
     registration_response = None  # Reset response
 
-    # Wait until response is received
     start_time = time.time()
     while registration_response is None:
         if time.time() - start_time > 5:  # Timeout after 5 seconds
@@ -123,6 +149,7 @@ def handle_private_message(data):
         print(f"\n{data['sender']}: {data['message']}\nYou: ", end='', flush=True)
 
 
+
 @sio.on('message_error')
 def handle_message_error(data):
     print(f"Error: {data['message']}")
@@ -138,6 +165,11 @@ def wait_for_user_check_response():
         if time.time() - start_time > timeout:
             return {'exists': False}  # Timeout response
     return user_check_response
+
+@sio.on('user_check_response')
+def handle_user_check_response(data):
+    global user_check_response
+    user_check_response = data  # Store response for waiting function
 
 
 def start_chat():
@@ -155,7 +187,6 @@ def start_chat():
         if not response['exists']:
             print(f"\n!!!! User '{recipient}' is not online. Try another user.\n")
             continue  # Loop again for a valid username
-
 
         print(f"\nStarting chat with {recipient}. Type 'exit' to switch users.\n")
 
@@ -175,6 +206,7 @@ def disconnect_client():
     print("Disconnecting from server...")
     sio.disconnect()
     sys.exit(0)
+
 
 def main():
     try:
