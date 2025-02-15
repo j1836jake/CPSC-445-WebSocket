@@ -1,17 +1,16 @@
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from asyncio import timeout
+
 import socketio
 import sys
-import re
-import threading
 import getpass
-SERVER_URL = "https://localhost:5001"
+import time
+
+SERVER_URL = "http://localhost:5001"
 EXIT_COMMAND = "exit"
 
 registration_response = None  # Stores server response
 user_check_response = None  # Stores server response
 login_response = None  # Stores login response from the server
-
 
 print("Starting client...")  # Added print
 
@@ -60,7 +59,6 @@ def register():
         else:
             print(f"Registration failed: {response['message']}. Try again.")
 
-
 def login():
     while True:
         username = input("Enter your username: ").strip()
@@ -71,20 +69,21 @@ def login():
 
         if response['success']:
             print(f"Login successful: {response['message']}")
+            sio.emit('mark_online', {'username': username})  # Ensure server marks user as online
             start_chat()
             break
         else:
             print(f"Login failed: {response['message']}. Try again.")
-
 
 def wait_for_login_response():
     """Waits for the login response from the server before proceeding."""
     global login_response
     login_response = None  # Reset response
 
+    start_time = time.time()
     while login_response is None:
-        pass  # Keep looping until response arrives
-
+        if time.time() - start_time > 5:  # Timeout after 5 seconds
+            return {'success': False, 'message': 'Server timeout'}
     return login_response
 
 @sio.on('login_response')
@@ -99,11 +98,11 @@ def wait_for_registration_response():
     registration_response = None  # Reset response
 
     # Wait until response is received
+    start_time = time.time()
     while registration_response is None:
-        pass  # Keep looping until response arrives
-
+        if time.time() - start_time > 5:  # Timeout after 5 seconds
+            return {'success': False, 'message': 'Server timeout'}
     return registration_response
-
 
 @sio.on('registration_response')
 def handle_registration_response(data):
@@ -114,50 +113,15 @@ def handle_registration_response(data):
 def handle_user_joined(data):
     print(f"\n*** User {data['username']} has joined the chat!\n")
 
-@sio.event
-def disconnect():
-    print("Disconnected from server!")
-    reconnect()
-
-def disconnect_client():
-    print("Disconnecting from server...")
-    sio.disconnect()
-    sys.exit(0)
-
-def reconnect():
-    try:
-        print("\n!!! Attempting to reconnect to server...")
-        sio.connect(SERVER_URL)
-        print("=== Reconnected successfully! ===")
-        return True
-    except Exception as e:
-        print(f"XXX Reconnection failed - Please restart client XXX")
-        return False
-
-@sio.on('user_left')
-def handle_user_left(data):
-    print(f"\n--- User {data['username']} has left the chat!\n")
-
-
-@sio.on('server_response')
-def on_message(data): # When server sends 'server_response'
-    print(f"Received from server: {data}")
-
-def send_message():
-    recipient = input("Enter recipient's username: ")
-    message = input("Enter your message: ")
-    sio.emit('private_message', {
-        'recipient': recipient,
-        'message': message
-    })
+@sio.on('user_check_response')
+def handle_user_check_response(data):
+    global user_check_response
+    user_check_response = data  # Store response for waiting function
 
 @sio.on('new_private_message')
 def handle_private_message(data):
-    print(f"\n{data['sender']}: {data['message']}\nYou: ", end='', flush=True)
+        print(f"\n{data['sender']}: {data['message']}\nYou: ", end='', flush=True)
 
-# @sio.on('message_sent')
-# def handle_message_sent(data):
-#     print("Message sent!\nYou: ", end='', flush=True)
 
 @sio.on('message_error')
 def handle_message_error(data):
@@ -167,16 +131,13 @@ def wait_for_user_check_response():
     """Waits for the user check response before proceeding."""
     global user_check_response
     user_check_response = None  # Reset response
+    timeout = 5
 
+    start_time = time.time()
     while user_check_response is None:
-        pass  # Keep looping until response arrives
-
+        if time.time() - start_time > timeout:
+            return {'exists': False}  # Timeout response
     return user_check_response
-
-@sio.on('user_check_response')
-def handle_user_check_response(data):
-    global user_check_response
-    user_check_response = data  # Store response for waiting function
 
 
 def start_chat():
@@ -210,11 +171,15 @@ def start_chat():
                 'message': message
             })
 
+def disconnect_client():
+    print("Disconnecting from server...")
+    sio.disconnect()
+    sys.exit(0)
+
 def main():
     try:
-        print("Attempting to connect to server...")  # Added print
-        sio.connect(SERVER_URL) # Connect to server and keep connection open
-
+        print("Attempting to connect to server...")
+        sio.connect(SERVER_URL)  # Connect to server
         sio.wait()
     except Exception as e:
         print(f"Error: {e}")
